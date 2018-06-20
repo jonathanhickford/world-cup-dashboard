@@ -12,6 +12,7 @@ import RemoteData.Http
 import Http exposing (Error)
 import Date exposing (Date)
 import Time exposing (Time, inSeconds)
+import Dict exposing (Dict)
 
 
 ---- MODEL ----
@@ -27,6 +28,8 @@ type alias Match =
     , result : Result
     , home_team_events : List MatchEvent
     , away_team_events : List MatchEvent
+    , home_team_stats : Maybe TeamStats
+    , away_team_stats : Maybe TeamStats
     }
 
 
@@ -59,6 +62,13 @@ type alias Team =
     { country : String
     , code : TeamCode
     , goals : Maybe Int
+    }
+
+
+type alias TeamStats =
+    { yellow_cards : Int
+    , red_cards : Int
+    , points : Int
     }
 
 
@@ -110,6 +120,8 @@ view model =
         , viewFastestGoal model.matchList
         , h2 [] [ text "Biggest Loss" ]
         , viewBiggestLoss model.matchList
+        , h2 [] [ text "Dirtiest Team" ]
+        , viewDirtiestTeam model.matchList
         , h2 [] [ text "Match List" ]
         , viewMatchList model.matchList
         ]
@@ -191,11 +203,44 @@ viewBiggestLoss matchList =
                     ]
 
 
+viewDirtiestTeam : WebData (List Match) -> Html Msg
+viewDirtiestTeam matchList =
+    case matchList of
+        NotAsked ->
+            displayNotAsked
+
+        Loading ->
+            displayLoading
+
+        Failure error ->
+            displayError error
+
+        Success matches ->
+            let
+                card_count =
+                    matches
+                        |> List.foldl cardCount Dict.empty
+                        |> Dict.toList
+                        |> List.sortBy sortByPoints
+                        |> List.reverse
+                        |> List.take 10
+            in
+                div []
+                    [ Html.Keyed.ul [] <|
+                        List.map keyedDisplayDirtyTeam card_count
+                    ]
+
+
 dateInSeconds : Match -> Float
 dateInSeconds match =
     match.datetime
         |> Date.toTime
         |> Time.inSeconds
+
+
+sortByPoints : ( String, TeamStats ) -> Int
+sortByPoints ( country, stats ) =
+    stats.points
 
 
 firstGoal : Match -> Maybe MatchEvent
@@ -209,6 +254,47 @@ firstGoal match =
             |> List.filter isGoalEvent
             |> List.sortBy .time
             |> List.head
+
+
+cardCount : Match -> Dict String TeamStats -> Dict String TeamStats
+cardCount match store =
+    let
+        updates =
+            [ ( match.home_team, match.home_team_stats ), ( match.away_team, match.away_team_stats ) ]
+                |> List.map
+                    (\( team, team_match_stats ) ->
+                        case team_match_stats of
+                            Nothing ->
+                                ( team.country, Nothing )
+
+                            Just match_stats ->
+                                case Dict.get team.country store of
+                                    Nothing ->
+                                        ( team.country
+                                        , Just (TeamStats match_stats.yellow_cards match_stats.red_cards match_stats.points)
+                                        )
+
+                                    Just stored_stats ->
+                                        ( team.country
+                                        , Just
+                                            (TeamStats
+                                                (stored_stats.yellow_cards + match_stats.yellow_cards)
+                                                (stored_stats.red_cards + match_stats.red_cards)
+                                                (stored_stats.points + match_stats.points)
+                                            )
+                                        )
+                    )
+
+        update_action item store =
+            case Tuple.second item of
+                Nothing ->
+                    store
+
+                Just stats ->
+                    Dict.insert (Tuple.first item) stats store
+    in
+        updates
+            |> List.foldl update_action store
 
 
 isGoalEvent : MatchEvent -> Bool
@@ -329,6 +415,21 @@ displayLossMargin ( loss, ( loser, match ) ) =
         ]
 
 
+keyedDisplayDirtyTeam : ( String, TeamStats ) -> ( String, Html Msg )
+keyedDisplayDirtyTeam ( country, stats ) =
+    ( toString country, lazy displayDirtyTeam ( country, stats ) )
+
+
+displayDirtyTeam : ( String, TeamStats ) -> Html Msg
+displayDirtyTeam ( country, stats ) =
+    li []
+        [ text (toString stats.points)
+        , text " "
+        , text country
+        , text (" (reds: " ++ toString stats.red_cards ++ " yellows: " ++ toString stats.yellow_cards ++ ")")
+        ]
+
+
 displayMatchEvent : MatchEvent -> Html Msg
 displayMatchEvent matchEvent =
     li []
@@ -381,6 +482,8 @@ matchDecoder =
             (Decode.field "away_team" teamDecode
                 |> Decode.andThen (\team -> Decode.field "away_team_events" (Decode.list (matchEventDecode team)))
             )
+        |> required "home_team_statistics" (Decode.nullable statsDecode)
+        |> required "away_team_statistics" (Decode.nullable statsDecode)
 
 
 statusStringToStatusDecode : String -> Decode.Decoder Status
@@ -397,6 +500,24 @@ statusStringToStatusDecode str =
 
         somethingElse ->
             Decode.fail <| "Unknown status: " ++ somethingElse
+
+
+statsDecode : Decode.Decoder TeamStats
+statsDecode =
+    decode TeamStats
+        |> required "yellow_cards" Decode.int
+        |> required "red_cards" Decode.int
+        |> custom
+            (Decode.field "yellow_cards" Decode.int
+                |> Decode.andThen
+                    (\yellow ->
+                        Decode.field "red_cards" Decode.int
+                            |> Decode.andThen
+                                (\red ->
+                                    Decode.succeed (2 * red + yellow)
+                                )
+                    )
+            )
 
 
 teamDecode : Decode.Decoder Team
