@@ -151,7 +151,7 @@ fetchPopulation : Cmd Msg
 fetchPopulation =
     let
         url =
-            "/population.json"
+            "%PUBLIC_URL%/population.json"
     in
         RemoteData.Http.get url HandlePopulationResponse populationsDecode
 
