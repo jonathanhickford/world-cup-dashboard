@@ -1,7 +1,7 @@
 module Main exposing (..)
 
-import Html exposing (Html, text, span, div, h1, h2, ul, li, strong, em)
-import Html.Attributes exposing (class)
+import Html exposing (Html, text, span, div, h1, h2, ul, li, strong, em, p, a)
+import Html.Attributes exposing (class, href)
 import Html.Keyed
 import Html.Lazy exposing (lazy)
 import Json.Decode as Decode
@@ -13,9 +13,23 @@ import Http exposing (Error)
 import Date exposing (Date)
 import Time exposing (Time, inSeconds)
 import Dict exposing (Dict)
+import Round
 
 
 ---- MODEL ----
+
+
+type alias Populaton =
+    { country : String
+    , population : Int
+    }
+
+
+type alias TeamSummaryStats =
+    { country : String
+    , goals_for : Int
+    , population : Maybe Int
+    }
 
 
 type alias Match =
@@ -73,12 +87,15 @@ type alias TeamStats =
 
 
 type alias Model =
-    { matchList : WebData (List Match) }
+    { matchList : WebData (List Match)
+    , populationList : WebData (List Populaton)
+    , summaryList : WebData (List TeamSummaryStats)
+    }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model Loading, fetchMatches )
+    ( Model Loading Loading Loading, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
 
 
 
@@ -87,6 +104,8 @@ init =
 
 type Msg
     = HandleMatchesResponse (WebData (List Match))
+    | HandlePopulationResponse (WebData (List Populaton))
+    | HandleSummaryResponse (WebData (List TeamSummaryStats))
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -94,6 +113,16 @@ update msg model =
     case msg of
         HandleMatchesResponse matches ->
             ( { model | matchList = matches }
+            , Cmd.none
+            )
+
+        HandlePopulationResponse population ->
+            ( { model | populationList = population }
+            , Cmd.none
+            )
+
+        HandleSummaryResponse summary ->
+            ( { model | summaryList = summary }
             , Cmd.none
             )
 
@@ -106,6 +135,25 @@ fetchMatches =
             "https://worldcup.sfg.io/matches"
     in
         RemoteData.Http.get url HandleMatchesResponse matchesDecoder
+
+
+fetchSummary : Cmd Msg
+fetchSummary =
+    let
+        url =
+            --"/matches.json"
+            "https://worldcup.sfg.io/teams/results"
+    in
+        RemoteData.Http.get url HandleSummaryResponse summariesDecode
+
+
+fetchPopulation : Cmd Msg
+fetchPopulation =
+    let
+        url =
+            "/population.json"
+    in
+        RemoteData.Http.get url HandlePopulationResponse populationsDecode
 
 
 
@@ -122,6 +170,17 @@ view model =
         , viewBiggestLoss model.matchList
         , h2 [] [ text "Dirtiest Team" ]
         , viewDirtiestTeam model.matchList
+        , h2 [] [ text "Goals per Capita (Millions)" ]
+        , p []
+            [ text "Sources: "
+            , a [ href "https://en.wikipedia.org/wiki/List_of_countries_by_population_(United_Nations)" ]
+                [ text "Wikipedia UN data"
+                ]
+            , text " and "
+            , a [ href "https://en.wikipedia.org/wiki/Demography_of_the_United_Kingdom#Population" ]
+                [ text "Wikipedia UK/England data" ]
+            ]
+        , viewGoalsPerCapita model.summaryList model.populationList
         , h2 [] [ text "Match List" ]
         , viewMatchList model.matchList
         ]
@@ -229,6 +288,56 @@ viewDirtiestTeam matchList =
                     [ Html.Keyed.ul [] <|
                         List.map keyedDisplayDirtyTeam card_count
                     ]
+
+
+viewGoalsPerCapita : WebData (List TeamSummaryStats) -> WebData (List Populaton) -> Html Msg
+viewGoalsPerCapita summary population =
+    case ( summary, population ) of
+        ( NotAsked, _ ) ->
+            displayNotAsked
+
+        ( _, NotAsked ) ->
+            displayNotAsked
+
+        ( Loading, _ ) ->
+            displayLoading
+
+        ( _, Loading ) ->
+            displayLoading
+
+        ( Failure error1, Failure error2 ) ->
+            displayErrors error1 error2
+
+        ( Failure error, _ ) ->
+            displayError error
+
+        ( _, Failure error ) ->
+            displayError error
+
+        ( Success summary, Success population ) ->
+            let
+                summaries_with_population =
+                    summary
+                        |> List.map (\team -> { team | population = (findbyCountry team.country population) })
+                        |> List.map (\team -> calulateGoalsPerCapita team)
+                        |> List.sort
+                        |> List.reverse
+                        |> List.take 10
+            in
+                div []
+                    [ Html.Keyed.ul [] <|
+                        List.map keyedDisplayPerCapita summaries_with_population
+                    ]
+
+
+calulateGoalsPerCapita : TeamSummaryStats -> ( Float, Int, Int, String )
+calulateGoalsPerCapita stats =
+    case stats.population of
+        Nothing ->
+            ( 0.0, 0, stats.goals_for, stats.country )
+
+        Just p ->
+            ( (toFloat stats.goals_for) / (toFloat p) * 1000000, p, stats.goals_for, stats.country )
 
 
 dateInSeconds : Match -> Float
@@ -415,6 +524,21 @@ displayLossMargin ( loss, ( loser, match ) ) =
         ]
 
 
+keyedDisplayPerCapita : ( Float, Int, Int, String ) -> ( String, Html Msg )
+keyedDisplayPerCapita ( per_capita, population, goals, country ) =
+    ( country, lazy displayPerCapita ( per_capita, population, goals, country ) )
+
+
+displayPerCapita : ( Float, Int, Int, String ) -> Html Msg
+displayPerCapita ( per_capita, population, goals, country ) =
+    li []
+        [ text ((Round.round 2 per_capita) ++ " ")
+        , text (country ++ " ")
+        , text ("(goals: " ++ toString goals ++ ", ")
+        , text ("population: " ++ toString population ++ ")")
+        ]
+
+
 keyedDisplayDirtyTeam : ( String, TeamStats ) -> ( String, Html Msg )
 keyedDisplayDirtyTeam ( country, stats ) =
     ( toString country, lazy displayDirtyTeam ( country, stats ) )
@@ -426,7 +550,7 @@ displayDirtyTeam ( country, stats ) =
         [ text (toString stats.points)
         , text " "
         , text country
-        , text (" (reds: " ++ toString stats.red_cards ++ " yellows: " ++ toString stats.yellow_cards ++ ")")
+        , text (" (reds: " ++ toString stats.red_cards ++ ", yellows: " ++ toString stats.yellow_cards ++ ")")
         ]
 
 
@@ -443,6 +567,11 @@ displayMatchEvent matchEvent =
 displayError : Http.Error -> Html msg
 displayError error =
     text ("Failed with error: " ++ toString error)
+
+
+displayErrors : Http.Error -> Http.Error -> Html msg
+displayErrors error1 error2 =
+    text ("Failed with errors: " ++ (toString error1) ++ (toString error2))
 
 
 displayLoading : Html msg
@@ -552,6 +681,47 @@ matchEventDecode team =
         (Decode.field "player" Decode.string)
         (Decode.field "time" Decode.string)
         (Decode.succeed team)
+
+
+populationsDecode : Decode.Decoder (List Populaton)
+populationsDecode =
+    Decode.list populationDecode
+
+
+populationDecode : Decode.Decoder Populaton
+populationDecode =
+    Decode.map2 Populaton
+        (Decode.field "Country" Decode.string)
+        (Decode.field "Population" Decode.int)
+
+
+summariesDecode : Decode.Decoder (List TeamSummaryStats)
+summariesDecode =
+    Decode.list summaryDecode
+
+
+summaryDecode : Decode.Decoder TeamSummaryStats
+summaryDecode =
+    Decode.map3 TeamSummaryStats
+        (Decode.field "country" Decode.string)
+        (Decode.field "goals_for" Decode.int)
+        (Decode.succeed Nothing)
+
+
+findbyCountry : String -> List Populaton -> Maybe Int
+findbyCountry country list =
+    let
+        population =
+            list
+                |> List.filter (\item -> item.country == country)
+                |> List.head
+    in
+        case population of
+            Nothing ->
+                Nothing
+
+            Just population ->
+                Just population.population
 
 
 
