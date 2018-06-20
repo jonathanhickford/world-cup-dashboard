@@ -68,7 +68,7 @@ type alias Model =
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model NotAsked, fetchMatches )
+    ( Model Loading, fetchMatches )
 
 
 
