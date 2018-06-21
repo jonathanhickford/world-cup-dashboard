@@ -441,7 +441,10 @@ displayMatch match =
             li [] [ displayCompleteMatch match ]
 
         InProgress ->
-            li [] [ displayCompleteMatch match ]
+            li []
+                [ displayCompleteMatch match
+                , span [] [ text " (in progress)" ]
+                ]
 
         Future ->
             li [] [ displayFutureMatch match ]
