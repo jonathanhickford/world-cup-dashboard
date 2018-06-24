@@ -1,9 +1,8 @@
 module Main exposing (..)
 
-import Html exposing (Html, text, span, div, h1, h2, ul, li, strong, em, p, a)
-import Html.Attributes exposing (class, href)
+import Html exposing (Html, text, span, div, h1, h2, ul, li, p, a, pre, strong)
+import Html.Attributes exposing (href)
 import Html.Keyed
-import Html.Lazy exposing (lazy)
 import Json.Decode as Decode
 import Json.Decode.Extra exposing (date)
 import Json.Decode.Pipeline exposing (decode, required, optional, custom, hardcoded)
@@ -19,7 +18,7 @@ import Round
 ---- MODEL ----
 
 
-type alias Populaton =
+type alias Population =
     { country : String
     , population : Int
     }
@@ -27,6 +26,14 @@ type alias Populaton =
 
 type alias TeamSummaryStats =
     { country : String
+    , code : TeamCode
+    , goals_for : Int
+    }
+
+
+type alias TeamSummaryStatsWithPopulation =
+    { country : String
+    , code : TeamCode
     , goals_for : Int
     , population : Maybe Int
     }
@@ -40,10 +47,6 @@ type alias Match =
     , home_team : Team
     , away_team : Team
     , result : Result
-    , home_team_events : List MatchEvent
-    , away_team_events : List MatchEvent
-    , home_team_stats : Maybe TeamStats
-    , away_team_stats : Maybe TeamStats
     }
 
 
@@ -52,7 +55,6 @@ type alias MatchEvent =
     , type_of_event : String
     , player : String
     , time : String
-    , team : Team
     }
 
 
@@ -75,12 +77,14 @@ type alias TeamCode =
 type alias Team =
     { country : String
     , code : TeamCode
-    , goals : Maybe Int
+    , events : Maybe (List MatchEvent)
+    , stats : Maybe TeamMatchStats
     }
 
 
-type alias TeamStats =
-    { yellow_cards : Int
+type alias TeamMatchStats =
+    { goals : Int
+    , yellow_cards : Int
     , red_cards : Int
     , points : Int
     }
@@ -88,14 +92,15 @@ type alias TeamStats =
 
 type alias Model =
     { matchList : WebData (List Match)
-    , populationList : WebData (List Populaton)
+    , populationList : WebData (List Population)
     , summaryList : WebData (List TeamSummaryStats)
+    , mergedPopulationAndStats : WebData (List TeamSummaryStatsWithPopulation)
     }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model Loading Loading Loading, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
+    ( Model Loading Loading Loading Loading, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
 
 
 
@@ -104,7 +109,7 @@ init =
 
 type Msg
     = HandleMatchesResponse (WebData (List Match))
-    | HandlePopulationResponse (WebData (List Populaton))
+    | HandlePopulationResponse (WebData (List Population))
     | HandleSummaryResponse (WebData (List TeamSummaryStats))
 
 
@@ -117,21 +122,29 @@ update msg model =
             )
 
         HandlePopulationResponse population ->
-            ( { model | populationList = population }
-            , Cmd.none
-            )
+            let
+                mergedPopulationAndStats =
+                    attemptToMergePopulationAndSummaryStats population model.summaryList
+            in
+                ( { model | populationList = population, mergedPopulationAndStats = mergedPopulationAndStats }
+                , Cmd.none
+                )
 
         HandleSummaryResponse summary ->
-            ( { model | summaryList = summary }
-            , Cmd.none
-            )
+            let
+                mergedPopulationAndStats =
+                    attemptToMergePopulationAndSummaryStats model.populationList summary
+            in
+                ( { model | summaryList = summary, mergedPopulationAndStats = mergedPopulationAndStats }
+                , Cmd.none
+                )
 
 
 fetchMatches : Cmd Msg
 fetchMatches =
     let
         url =
-            --"/matches.json"
+            --"%PUBLIC_URL%/matches.json"
             "https://worldcup.sfg.io/matches"
     in
         RemoteData.Http.get url HandleMatchesResponse matchesDecoder
@@ -154,6 +167,29 @@ fetchPopulation =
             "%PUBLIC_URL%/population.json"
     in
         RemoteData.Http.get url HandlePopulationResponse populationsDecode
+
+
+attemptToMergePopulationAndSummaryStats : WebData (List Population) -> WebData (List TeamSummaryStats) -> WebData (List TeamSummaryStatsWithPopulation)
+attemptToMergePopulationAndSummaryStats population stats =
+    case ( population, stats ) of
+        ( Success p, Success s ) ->
+            Success (mergePopulationandStats p s)
+
+        ( _, _ ) ->
+            Loading
+
+
+mergePopulationandStats : List Population -> List TeamSummaryStats -> List TeamSummaryStatsWithPopulation
+mergePopulationandStats population stats =
+    stats
+        |> List.map
+            (\team ->
+                TeamSummaryStatsWithPopulation
+                    team.country
+                    team.code
+                    team.goals_for
+                    (populationbyCountry team.country population)
+            )
 
 
 
@@ -180,7 +216,7 @@ view model =
             , a [ href "https://en.wikipedia.org/wiki/Demography_of_the_United_Kingdom#Population" ]
                 [ text "Wikipedia UK/England data" ]
             ]
-        , viewGoalsPerCapita model.summaryList model.populationList
+        , viewGoalsPerCapita model.mergedPopulationAndStats
         , h2 [] [ text "Match List" ]
         , viewMatchList model.matchList
         ]
@@ -226,7 +262,7 @@ viewFastestGoal matchList =
                 matches_with_goals =
                     matches
                         |> List.filterMap firstGoal
-                        |> List.sortBy .time
+                        |> List.sortBy time
                         |> List.take 10
             in
                 div []
@@ -280,7 +316,7 @@ viewDirtiestTeam matchList =
                     matches
                         |> List.foldl cardCount Dict.empty
                         |> Dict.toList
-                        |> List.sortBy sortByPoints
+                        |> List.sortBy teamPoints
                         |> List.reverse
                         |> List.take 10
             in
@@ -290,37 +326,24 @@ viewDirtiestTeam matchList =
                     ]
 
 
-viewGoalsPerCapita : WebData (List TeamSummaryStats) -> WebData (List Populaton) -> Html Msg
-viewGoalsPerCapita summary population =
-    case ( summary, population ) of
-        ( NotAsked, _ ) ->
+viewGoalsPerCapita : WebData (List TeamSummaryStatsWithPopulation) -> Html Msg
+viewGoalsPerCapita summary =
+    case summary of
+        NotAsked ->
             displayNotAsked
 
-        ( _, NotAsked ) ->
-            displayNotAsked
-
-        ( Loading, _ ) ->
+        Loading ->
             displayLoading
 
-        ( _, Loading ) ->
-            displayLoading
-
-        ( Failure error1, Failure error2 ) ->
-            displayErrors error1 error2
-
-        ( Failure error, _ ) ->
+        Failure error ->
             displayError error
 
-        ( _, Failure error ) ->
-            displayError error
-
-        ( Success summary, Success population ) ->
+        Success summary ->
             let
                 summaries_with_population =
                     summary
-                        |> List.map (\team -> { team | population = (findbyCountry team.country population) })
                         |> List.map (\team -> calulateGoalsPerCapita team)
-                        |> List.sort
+                        |> List.sortBy Tuple.first
                         |> List.reverse
                         |> List.take 10
             in
@@ -330,14 +353,14 @@ viewGoalsPerCapita summary population =
                     ]
 
 
-calulateGoalsPerCapita : TeamSummaryStats -> ( Float, Int, Int, String )
+calulateGoalsPerCapita : TeamSummaryStatsWithPopulation -> ( Float, TeamSummaryStatsWithPopulation )
 calulateGoalsPerCapita stats =
     case stats.population of
         Nothing ->
-            ( 0.0, 0, stats.goals_for, stats.country )
+            ( 0.0, stats )
 
         Just p ->
-            ( (toFloat stats.goals_for) / (toFloat p) * 1000000, p, stats.goals_for, stats.country )
+            ( (toFloat stats.goals_for) / (toFloat p) * 1000000, stats )
 
 
 dateInSeconds : Match -> Float
@@ -347,29 +370,43 @@ dateInSeconds match =
         |> Time.inSeconds
 
 
-sortByPoints : ( String, TeamStats ) -> Int
-sortByPoints ( country, stats ) =
+teamPoints : ( String, TeamMatchStats ) -> Int
+teamPoints ( _, stats ) =
     stats.points
 
 
-firstGoal : Match -> Maybe MatchEvent
+firstGoal : Match -> Maybe ( String, MatchEvent )
 firstGoal match =
     let
         all_match_events =
-            match.home_team_events
-                ++ match.away_team_events
+            case ( match, match.home_team.events, match.away_team.events ) of
+                ( match, Just h, Just a ) ->
+                    (h
+                        |> List.map (\event -> ( match.home_team.country, event ))
+                    )
+                        ++ (a
+                                |> List.map (\event -> ( match.away_team.country, event ))
+                           )
+
+                ( _, _, _ ) ->
+                    []
     in
         all_match_events
             |> List.filter isGoalEvent
-            |> List.sortBy .time
+            |> List.sortBy time
             |> List.head
 
 
-cardCount : Match -> Dict String TeamStats -> Dict String TeamStats
+time : ( String, MatchEvent ) -> String
+time ( _, event ) =
+    event.time
+
+
+cardCount : Match -> Dict String TeamMatchStats -> Dict String TeamMatchStats
 cardCount match store =
     let
         updates =
-            [ ( match.home_team, match.home_team_stats ), ( match.away_team, match.away_team_stats ) ]
+            [ ( match.home_team, match.home_team.stats ), ( match.away_team, match.away_team.stats ) ]
                 |> List.map
                     (\( team, team_match_stats ) ->
                         case team_match_stats of
@@ -380,13 +417,20 @@ cardCount match store =
                                 case Dict.get team.country store of
                                     Nothing ->
                                         ( team.country
-                                        , Just (TeamStats match_stats.yellow_cards match_stats.red_cards match_stats.points)
+                                        , Just
+                                            (TeamMatchStats
+                                                match_stats.goals
+                                                match_stats.yellow_cards
+                                                match_stats.red_cards
+                                                match_stats.points
+                                            )
                                         )
 
                                     Just stored_stats ->
                                         ( team.country
                                         , Just
-                                            (TeamStats
+                                            (TeamMatchStats
+                                                (stored_stats.goals + match_stats.goals)
                                                 (stored_stats.yellow_cards + match_stats.yellow_cards)
                                                 (stored_stats.red_cards + match_stats.red_cards)
                                                 (stored_stats.points + match_stats.points)
@@ -406,32 +450,26 @@ cardCount match store =
             |> List.foldl update_action store
 
 
-isGoalEvent : MatchEvent -> Bool
-isGoalEvent event =
+isGoalEvent : ( String, MatchEvent ) -> Bool
+isGoalEvent ( _, event ) =
     event.type_of_event == "goal"
 
 
 lossMargin : Match -> Maybe ( Int, ( Team, Match ) )
 lossMargin match =
-    case ( match.home_team.goals, match.away_team.goals ) of
-        ( Nothing, Nothing ) ->
-            Nothing
-
-        ( Nothing, _ ) ->
-            Nothing
-
-        ( _, Nothing ) ->
-            Nothing
-
-        ( Just home, Just away ) ->
+    case ( match.home_team.stats, match.away_team.stats ) of
+        ( Just home_stats, Just away_stats ) ->
             let
                 loss =
-                    home - away
+                    home_stats.goals - away_stats.goals
             in
                 if (loss > 0) then
                     Just ( loss, ( match.away_team, match ) )
                 else
                     Just ( -loss, ( match.home_team, match ) )
+
+        ( _, _ ) ->
+            Nothing
 
 
 displayMatch : Match -> Html Msg
@@ -443,7 +481,7 @@ displayMatch match =
         InProgress ->
             li []
                 [ displayCompleteMatch match
-                , span [] [ text " (in progress)" ]
+                , text " (in progress)"
                 ]
 
         Future ->
@@ -452,23 +490,30 @@ displayMatch match =
 
 displayCompleteMatch : Match -> Html Msg
 displayCompleteMatch match =
-    span []
-        [ displayTeamName match.result match.home_team
-        , text " "
-        , displayGoals match.home_team.goals
-        , text " - "
-        , displayGoals match.away_team.goals
-        , text " "
-        , displayTeamName match.result match.away_team
-        ]
+    let
+        goal_text =
+            case ( match.home_team.stats, match.away_team.stats ) of
+                ( Just home_stats, Just away_stats ) ->
+                    text
+                        (toString home_stats.goals ++ " - " ++ toString away_stats.goals)
+
+                ( _, _ ) ->
+                    text ""
+    in
+        span []
+            [ displayTeamName match.result match.home_team
+            , text " "
+            , goal_text
+            , text " "
+            , displayTeamName match.result match.away_team
+            ]
 
 
 displayGoals : Maybe Int -> Html Msg
 displayGoals goals =
     case goals of
         Just goals_scored ->
-            span []
-                [ text (toString goals_scored) ]
+            text (toString goals_scored)
 
         Nothing ->
             text ""
@@ -478,42 +523,38 @@ displayTeamName : Result -> Team -> Html Msg
 displayTeamName result team =
     case result of
         NoResult ->
-            span [] [ text team.country ]
+            text team.country
 
         Draw ->
-            span [ class "draw" ] [ text team.country ]
+            strong [] [ text team.country ]
 
         Winner winning_team_code ->
             case winning_team_code == team.code of
                 True ->
-                    span [ class "winner" ] [ text team.country ]
+                    strong [] [ text team.country ]
 
                 False ->
-                    span [] [ text team.country ]
+                    text team.country
 
 
 displayFutureMatch : Match -> Html Msg
 displayFutureMatch match =
-    span []
-        [ span [] [ text match.home_team.country ]
-        , span [] [ text " - " ]
-        , span [] [ text match.away_team.country ]
-        ]
+    text (match.home_team.country ++ " - " ++ match.away_team.country)
 
 
 keyedDisplayMatch : Match -> ( String, Html Msg )
 keyedDisplayMatch match =
-    ( toString match.datetime, lazy displayMatch match )
+    ( toString match.datetime, displayMatch match )
 
 
-keyedDisplayMatchEvent : MatchEvent -> ( String, Html Msg )
-keyedDisplayMatchEvent matchEvent =
-    ( toString matchEvent.match_event_id, lazy displayMatchEvent matchEvent )
+keyedDisplayMatchEvent : ( String, MatchEvent ) -> ( String, Html Msg )
+keyedDisplayMatchEvent ( country, matchEvent ) =
+    ( toString matchEvent.match_event_id, (displayMatchEvent country matchEvent) )
 
 
 keyedDisplayLossMargin : ( Int, ( Team, Match ) ) -> ( String, Html Msg )
 keyedDisplayLossMargin ( loss, ( loser, match ) ) =
-    ( toString match.datetime, lazy displayLossMargin ( loss, ( loser, match ) ) )
+    ( toString match.datetime, displayLossMargin ( loss, ( loser, match ) ) )
 
 
 displayLossMargin : ( Int, ( Team, Match ) ) -> Html Msg
@@ -527,27 +568,36 @@ displayLossMargin ( loss, ( loser, match ) ) =
         ]
 
 
-keyedDisplayPerCapita : ( Float, Int, Int, String ) -> ( String, Html Msg )
-keyedDisplayPerCapita ( per_capita, population, goals, country ) =
-    ( country, lazy displayPerCapita ( per_capita, population, goals, country ) )
+keyedDisplayPerCapita : ( Float, TeamSummaryStatsWithPopulation ) -> ( String, Html Msg )
+keyedDisplayPerCapita ( per_capita, stats ) =
+    ( stats.country, displayPerCapita ( per_capita, stats ) )
 
 
-displayPerCapita : ( Float, Int, Int, String ) -> Html Msg
-displayPerCapita ( per_capita, population, goals, country ) =
-    li []
-        [ text ((Round.round 2 per_capita) ++ " ")
-        , text (country ++ " ")
-        , text ("(goals: " ++ toString goals ++ ", ")
-        , text ("population: " ++ toString population ++ ")")
-        ]
+displayPerCapita : ( Float, TeamSummaryStatsWithPopulation ) -> Html Msg
+displayPerCapita ( per_capita, stats ) =
+    let
+        displayPopulation =
+            case stats.population of
+                Nothing ->
+                    text "population: unknown)"
+
+                Just p ->
+                    text ("population: " ++ toString p ++ ")")
+    in
+        li []
+            [ text ((Round.round 2 per_capita) ++ " ")
+            , text (stats.country ++ " ")
+            , text ("(goals: " ++ toString stats.goals_for ++ ", ")
+            , displayPopulation
+            ]
 
 
-keyedDisplayDirtyTeam : ( String, TeamStats ) -> ( String, Html Msg )
+keyedDisplayDirtyTeam : ( String, TeamMatchStats ) -> ( String, Html Msg )
 keyedDisplayDirtyTeam ( country, stats ) =
-    ( toString country, lazy displayDirtyTeam ( country, stats ) )
+    ( country, displayDirtyTeam ( country, stats ) )
 
 
-displayDirtyTeam : ( String, TeamStats ) -> Html Msg
+displayDirtyTeam : ( String, TeamMatchStats ) -> Html Msg
 displayDirtyTeam ( country, stats ) =
     li []
         [ text (toString stats.points)
@@ -557,24 +607,24 @@ displayDirtyTeam ( country, stats ) =
         ]
 
 
-displayMatchEvent : MatchEvent -> Html Msg
-displayMatchEvent matchEvent =
+displayMatchEvent : String -> MatchEvent -> Html Msg
+displayMatchEvent country matchEvent =
     li []
         [ span [] [ text matchEvent.time ]
         , text " "
         , span [] [ text matchEvent.player ]
-        , span [] [ text (" (" ++ matchEvent.team.country ++ ")") ]
+        , span [] [ text (" (" ++ country ++ ")") ]
         ]
 
 
 displayError : Http.Error -> Html msg
 displayError error =
-    text ("Failed with error: " ++ toString error)
-
-
-displayErrors : Http.Error -> Http.Error -> Html msg
-displayErrors error1 error2 =
-    text ("Failed with errors: " ++ (toString error1) ++ (toString error2))
+    div []
+        [ p []
+            [ text "Failed with error: " ]
+        , pre []
+            [ text (toString error) ]
+        ]
 
 
 displayLoading : Html msg
@@ -599,23 +649,32 @@ matchesDecoder =
 matchDecoder : Decode.Decoder Match
 matchDecoder =
     decode Match
-        |> required "venue" Decode.string
         |> required "location" Decode.string
+        |> required "venue" Decode.string
         |> required "datetime" Json.Decode.Extra.date
         |> required "status" (Decode.string |> Decode.andThen statusStringToStatusDecode)
-        |> required "home_team" teamDecode
-        |> required "away_team" teamDecode
+        |> custom
+            (teamMonster "home_team" "home_team_events" "home_team_statistics")
+        |> custom
+            (teamMonster "away_team" "away_team_events" "away_team_statistics")
         |> optional "winner_code" resultDecode NoResult
-        |> custom
-            (Decode.field "home_team" teamDecode
-                |> Decode.andThen (\team -> Decode.field "home_team_events" (Decode.list (matchEventDecode team)))
+
+
+teamMonster : String -> String -> String -> Decode.Decoder Team
+teamMonster team_field events_field stats_field =
+    Decode.maybe (Decode.at [ team_field, "goals" ] Decode.int)
+        |> Decode.andThen
+            (\goals ->
+                Decode.field events_field (Decode.nullable (Decode.list matchEventDecode))
+                    |> Decode.andThen
+                        (\events ->
+                            Decode.field stats_field (Decode.nullable (statsDecode goals))
+                                |> Decode.andThen
+                                    (\stats ->
+                                        Decode.field team_field (teamDecode events stats)
+                                    )
+                        )
             )
-        |> custom
-            (Decode.field "away_team" teamDecode
-                |> Decode.andThen (\team -> Decode.field "away_team_events" (Decode.list (matchEventDecode team)))
-            )
-        |> required "home_team_statistics" (Decode.nullable statsDecode)
-        |> required "away_team_statistics" (Decode.nullable statsDecode)
 
 
 statusStringToStatusDecode : String -> Decode.Decoder Status
@@ -634,30 +693,36 @@ statusStringToStatusDecode str =
             Decode.fail <| "Unknown status: " ++ somethingElse
 
 
-statsDecode : Decode.Decoder TeamStats
-statsDecode =
-    decode TeamStats
-        |> required "yellow_cards" Decode.int
-        |> required "red_cards" Decode.int
-        |> custom
-            (Decode.field "yellow_cards" Decode.int
-                |> Decode.andThen
-                    (\yellow ->
-                        Decode.field "red_cards" Decode.int
-                            |> Decode.andThen
-                                (\red ->
-                                    Decode.succeed (2 * red + yellow)
-                                )
-                    )
-            )
+statsDecode : Maybe Int -> Decode.Decoder TeamMatchStats
+statsDecode goals =
+    let
+        g =
+            Maybe.withDefault 0 goals
+    in
+        decode TeamMatchStats
+            |> hardcoded g
+            |> required "yellow_cards" Decode.int
+            |> required "red_cards" Decode.int
+            |> custom
+                (Decode.field "yellow_cards" Decode.int
+                    |> Decode.andThen
+                        (\yellow ->
+                            Decode.field "red_cards" Decode.int
+                                |> Decode.andThen
+                                    (\red ->
+                                        Decode.succeed (2 * red + yellow)
+                                    )
+                        )
+                )
 
 
-teamDecode : Decode.Decoder Team
-teamDecode =
+teamDecode : Maybe (List MatchEvent) -> Maybe TeamMatchStats -> Decode.Decoder Team
+teamDecode events stats =
     decode Team
         |> required "country" Decode.string
         |> required "code" Decode.string
-        |> optional "goals" (Decode.map Just Decode.int) Nothing
+        |> hardcoded events
+        |> hardcoded stats
 
 
 resultDecode : Decode.Decoder Result
@@ -676,24 +741,23 @@ resultStringToResultDecode str =
             Decode.succeed (Winner teamCode)
 
 
-matchEventDecode : Team -> Decode.Decoder MatchEvent
-matchEventDecode team =
-    Decode.map5 MatchEvent
+matchEventDecode : Decode.Decoder MatchEvent
+matchEventDecode =
+    Decode.map4 MatchEvent
         (Decode.field "id" Decode.int)
         (Decode.field "type_of_event" Decode.string)
         (Decode.field "player" Decode.string)
         (Decode.field "time" Decode.string)
-        (Decode.succeed team)
 
 
-populationsDecode : Decode.Decoder (List Populaton)
+populationsDecode : Decode.Decoder (List Population)
 populationsDecode =
     Decode.list populationDecode
 
 
-populationDecode : Decode.Decoder Populaton
+populationDecode : Decode.Decoder Population
 populationDecode =
-    Decode.map2 Populaton
+    Decode.map2 Population
         (Decode.field "Country" Decode.string)
         (Decode.field "Population" Decode.int)
 
@@ -707,12 +771,12 @@ summaryDecode : Decode.Decoder TeamSummaryStats
 summaryDecode =
     Decode.map3 TeamSummaryStats
         (Decode.field "country" Decode.string)
+        (Decode.field "fifa_code" Decode.string)
         (Decode.field "goals_for" Decode.int)
-        (Decode.succeed Nothing)
 
 
-findbyCountry : String -> List Populaton -> Maybe Int
-findbyCountry country list =
+populationbyCountry : String -> List Population -> Maybe Int
+populationbyCountry country list =
     let
         population =
             list
