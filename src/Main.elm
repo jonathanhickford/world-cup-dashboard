@@ -68,6 +68,7 @@ type Status
     = Future
     | InProgress
     | Completed
+    | PendingCorrection
 
 
 type alias TeamCode =
@@ -484,6 +485,12 @@ displayMatch match =
                 , text " (in progress)"
                 ]
 
+        PendingCorrection ->
+            li []
+                [ displayCompleteMatch match
+                , text " (pending correction)"
+                ]
+
         Future ->
             li [] [ displayFutureMatch match ]
 
@@ -688,6 +695,9 @@ statusStringToStatusDecode str =
 
         "completed" ->
             Decode.succeed Completed
+
+        "pending_correction" ->
+            Decode.succeed PendingCorrection
 
         somethingElse ->
             Decode.fail <| "Unknown status: " ++ somethingElse
