@@ -708,31 +708,32 @@ statsDecode goals =
     let
         g =
             Maybe.withDefault 0 goals
+
+        reds =
+            Decode.field "red_cards" Decode.int
+
+        yellows =
+            Decode.field "yellow_cards" Decode.int
     in
-        decode TeamMatchStats
-            |> hardcoded g
-            |> required "yellow_cards" Decode.int
-            |> required "red_cards" Decode.int
-            |> custom
-                (Decode.field "yellow_cards" Decode.int
-                    |> Decode.andThen
-                        (\yellow ->
-                            Decode.field "red_cards" Decode.int
-                                |> Decode.andThen
-                                    (\red ->
-                                        Decode.succeed (2 * red + yellow)
-                                    )
-                        )
-                )
+        Decode.map4 TeamMatchStats
+            (Decode.succeed g)
+            yellows
+            reds
+            (Decode.map2 pointsFromCards yellows reds)
+
+
+pointsFromCards : Int -> Int -> Int
+pointsFromCards yellows reds =
+    2 * reds + yellows
 
 
 teamDecode : Maybe (List MatchEvent) -> Maybe TeamMatchStats -> Decode.Decoder Team
 teamDecode events stats =
-    decode Team
-        |> required "country" Decode.string
-        |> required "code" Decode.string
-        |> hardcoded events
-        |> hardcoded stats
+    Decode.map4 Team
+        (Decode.field "country" Decode.string)
+        (Decode.field "code" Decode.string)
+        (Decode.succeed events)
+        (Decode.succeed stats)
 
 
 resultDecode : Decode.Decoder Result
@@ -762,27 +763,22 @@ matchEventDecode =
 
 populationsDecode : Decode.Decoder (List Population)
 populationsDecode =
-    Decode.list populationDecode
-
-
-populationDecode : Decode.Decoder Population
-populationDecode =
-    Decode.map2 Population
-        (Decode.field "Country" Decode.string)
-        (Decode.field "Population" Decode.int)
+    Decode.list
+        (Decode.map2
+            Population
+            (Decode.field "Country" Decode.string)
+            (Decode.field "Population" Decode.int)
+        )
 
 
 summariesDecode : Decode.Decoder (List TeamSummaryStats)
 summariesDecode =
-    Decode.list summaryDecode
-
-
-summaryDecode : Decode.Decoder TeamSummaryStats
-summaryDecode =
-    Decode.map3 TeamSummaryStats
-        (Decode.field "country" Decode.string)
-        (Decode.field "fifa_code" Decode.string)
-        (Decode.field "goals_for" Decode.int)
+    Decode.list
+        (Decode.map3 TeamSummaryStats
+            (Decode.field "country" Decode.string)
+            (Decode.field "fifa_code" Decode.string)
+            (Decode.field "goals_for" Decode.int)
+        )
 
 
 populationbyCountry : String -> List Population -> Maybe Int
