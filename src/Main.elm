@@ -661,21 +661,21 @@ matchDecoder =
         |> required "datetime" Json.Decode.Extra.date
         |> required "status" (Decode.string |> Decode.andThen statusStringToStatusDecode)
         |> custom
-            (teamMonster "home_team" "home_team_events" "home_team_statistics")
+            (teamMonster { team_field = "home_team", events_field = "home_team_events", stats_field = "home_team_statistics" })
         |> custom
-            (teamMonster "away_team" "away_team_events" "away_team_statistics")
+            (teamMonster { team_field = "away_team", events_field = "away_team_events", stats_field = "away_team_statistics" })
         |> optional "winner_code" resultDecode NoResult
 
 
-teamMonster : String -> String -> String -> Decode.Decoder Team
-teamMonster team_field events_field stats_field =
+teamMonster : { team_field : String, events_field : String, stats_field : String } -> Decode.Decoder Team
+teamMonster { team_field, events_field, stats_field } =
     Decode.maybe (Decode.at [ team_field, "goals" ] Decode.int)
         |> Decode.andThen
             (\goals ->
-                Decode.field events_field (Decode.nullable (Decode.list matchEventDecode))
+                Decode.maybe (Decode.field events_field (Decode.list matchEventDecode))
                     |> Decode.andThen
                         (\events ->
-                            Decode.field stats_field (Decode.nullable (statsDecode goals))
+                            Decode.maybe (Decode.field stats_field (statsDecode goals))
                                 |> Decode.andThen
                                     (\stats ->
                                         Decode.field team_field (teamDecode events stats)
