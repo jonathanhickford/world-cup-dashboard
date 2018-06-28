@@ -1,6 +1,6 @@
 module Main exposing (..)
 
-import Html exposing (Html, text, span, div, h1, h2, ul, li, p, a, pre, strong)
+import Html exposing (Html, text, span, div, h1, h2, ul, li, p, a, pre, strong, em)
 import Html.Attributes exposing (href)
 import Html.Keyed
 import Json.Decode as Decode
@@ -28,7 +28,19 @@ type alias TeamSummaryStats =
     { country : String
     , code : TeamCode
     , goals_for : Int
+    , group : Group
     }
+
+
+type Group
+    = A
+    | B
+    | C
+    | D
+    | E
+    | F
+    | G
+    | H
 
 
 type alias TeamSummaryStatsWithPopulation =
@@ -42,6 +54,7 @@ type alias TeamSummaryStatsWithPopulation =
 type alias Match =
     { location : String
     , venue : String
+    , stage_name : String
     , datetime : Date
     , status : Status
     , home_team : Team
@@ -80,6 +93,7 @@ type alias Team =
     , code : TeamCode
     , events : Maybe (List MatchEvent)
     , stats : Maybe TeamMatchStats
+    , group : Maybe Group
     }
 
 
@@ -508,7 +522,9 @@ displayCompleteMatch match =
                     text ""
     in
         span []
-            [ displayTeamName match.result match.home_team
+            [ em [] [ text match.stage_name ]
+            , text ": "
+            , displayTeamName match.result match.home_team
             , text " "
             , goal_text
             , text " "
@@ -546,7 +562,11 @@ displayTeamName result team =
 
 displayFutureMatch : Match -> Html Msg
 displayFutureMatch match =
-    text (match.home_team.country ++ " - " ++ match.away_team.country)
+    span []
+        [ em [] [ text match.stage_name ]
+        , text
+            (": " ++ match.home_team.country ++ " - " ++ match.away_team.country)
+        ]
 
 
 keyedDisplayMatch : Match -> ( String, Html Msg )
@@ -658,6 +678,7 @@ matchDecoder =
     decode Match
         |> required "location" Decode.string
         |> required "venue" Decode.string
+        |> required "stage_name" Decode.string
         |> required "datetime" Json.Decode.Extra.date
         |> required "status" (Decode.string |> Decode.andThen statusStringToStatusDecode)
         |> custom
@@ -686,7 +707,7 @@ teamMonster { team_field, events_field, stats_field } =
 
 statusStringToStatusDecode : String -> Decode.Decoder Status
 statusStringToStatusDecode str =
-    case str of
+    case (String.toLower str) of
         "future" ->
             Decode.succeed Future
 
@@ -701,6 +722,37 @@ statusStringToStatusDecode str =
 
         somethingElse ->
             Decode.fail <| "Unknown status: " ++ somethingElse
+
+
+groupStringtoGroup : String -> Decode.Decoder Group
+groupStringtoGroup str =
+    case (String.toLower str) of
+        "a" ->
+            Decode.succeed A
+
+        "b" ->
+            Decode.succeed B
+
+        "c" ->
+            Decode.succeed C
+
+        "d" ->
+            Decode.succeed D
+
+        "e" ->
+            Decode.succeed E
+
+        "f" ->
+            Decode.succeed F
+
+        "g" ->
+            Decode.succeed G
+
+        "h" ->
+            Decode.succeed H
+
+        somethingElse ->
+            Decode.fail <| "Unknown group: " ++ somethingElse
 
 
 statsDecode : Maybe Int -> Decode.Decoder TeamMatchStats
@@ -729,11 +781,12 @@ pointsFromCards yellows reds =
 
 teamDecode : Maybe (List MatchEvent) -> Maybe TeamMatchStats -> Decode.Decoder Team
 teamDecode events stats =
-    Decode.map4 Team
+    Decode.map5 Team
         (Decode.field "country" Decode.string)
         (Decode.field "code" Decode.string)
         (Decode.succeed events)
         (Decode.succeed stats)
+        (Decode.succeed Nothing)
 
 
 resultDecode : Decode.Decoder Result
@@ -774,10 +827,11 @@ populationsDecode =
 summariesDecode : Decode.Decoder (List TeamSummaryStats)
 summariesDecode =
     Decode.list
-        (Decode.map3 TeamSummaryStats
+        (Decode.map4 TeamSummaryStats
             (Decode.field "country" Decode.string)
             (Decode.field "fifa_code" Decode.string)
             (Decode.field "goals_for" Decode.int)
+            (Decode.field "group_letter" (Decode.string |> Decode.andThen groupStringtoGroup))
         )
 
 
@@ -795,6 +849,22 @@ populationbyCountry country list =
 
             Just population ->
                 Just population.population
+
+
+groupbyCountry : String -> List TeamSummaryStats -> Maybe Group
+groupbyCountry country list =
+    let
+        group =
+            list
+                |> List.filter (\item -> item.country == country)
+                |> List.head
+    in
+        case group of
+            Nothing ->
+                Nothing
+
+            Just group ->
+                Just group.group
 
 
 
