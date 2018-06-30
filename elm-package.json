@@ -2,6 +2,7 @@
     "version": "1.0.0",
     "summary": "Worldcup dashboard",
     "repository": "https://github.com/jonathanhickford/world-cup-dashboard.git",
+    "homepage": "https://jonathanhickford.github.io/world-cup-dashboard",
     "license": "BSD3",
     "source-directories": [
         "src"
