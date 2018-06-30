@@ -1,7 +1,9 @@
 module Main exposing (..)
 
-import Html exposing (Html, text, span, div, h1, h2, ul, li, p, a, pre, strong, em)
-import Html.Attributes exposing (href)
+import Html exposing (Html, text, span, div, h1, h2, h3, ul, li, p, a, pre, strong, em)
+import Html.Attributes exposing (href, id)
+import Html.Events exposing (onClick)
+import Html.Events.Extra exposing (onClickPreventDefault)
 import Html.Keyed
 import Json.Decode as Decode
 import Json.Decode.Extra exposing (date)
@@ -13,6 +15,8 @@ import Date exposing (Date)
 import Time exposing (Time, inSeconds)
 import Dict exposing (Dict)
 import Round
+import List.Extra
+import DateFormat
 
 
 ---- MODEL ----
@@ -59,7 +63,7 @@ type alias Match =
     , status : Status
     , home_team : Team
     , away_team : Team
-    , result : Result
+    , result : MatchResult
     }
 
 
@@ -71,7 +75,7 @@ type alias MatchEvent =
     }
 
 
-type Result
+type MatchResult
     = NoResult
     | Draw
     | Winner TeamCode
@@ -93,7 +97,6 @@ type alias Team =
     , code : TeamCode
     , events : Maybe (List MatchEvent)
     , stats : Maybe TeamMatchStats
-    , group : Maybe Group
     }
 
 
@@ -110,12 +113,14 @@ type alias Model =
     , populationList : WebData (List Population)
     , summaryList : WebData (List TeamSummaryStats)
     , mergedPopulationAndStats : WebData (List TeamSummaryStatsWithPopulation)
+    , showGroupMatches : Bool
+    , showAll : Bool
     }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model Loading Loading Loading Loading, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
+    ( Model Loading Loading Loading Loading False False, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
 
 
 
@@ -126,6 +131,8 @@ type Msg
     = HandleMatchesResponse (WebData (List Match))
     | HandlePopulationResponse (WebData (List Population))
     | HandleSummaryResponse (WebData (List TeamSummaryStats))
+    | ToggleShowGroupMatches
+    | ToggleShowAll
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -153,6 +160,12 @@ update msg model =
                 ( { model | summaryList = summary, mergedPopulationAndStats = mergedPopulationAndStats }
                 , Cmd.none
                 )
+
+        ToggleShowGroupMatches ->
+            ( { model | showGroupMatches = not model.showGroupMatches }, Cmd.none )
+
+        ToggleShowAll ->
+            ( { model | showAll = not model.showAll }, Cmd.none )
 
 
 fetchMatches : Cmd Msg
@@ -215,13 +228,13 @@ view : Model -> Html Msg
 view model =
     div []
         [ h1 [] [ text "World Cup Sweepstake" ]
-        , h2 [] [ text "Fastest Goal" ]
-        , viewFastestGoal model.matchList
-        , h2 [] [ text "Biggest Loss" ]
-        , viewBiggestLoss model.matchList
-        , h2 [] [ text "Dirtiest Team" ]
-        , viewDirtiestTeam model.matchList
-        , h2 [] [ text "Goals per Capita (Millions)" ]
+        , h2 [ id "fastest_goal" ] [ text "Fastest Goal" ]
+        , viewFastestGoal model.matchList model.showAll
+        , h2 [ id "biggest_loss" ] [ text "Biggest Loss" ]
+        , viewBiggestLoss model.matchList model.showAll
+        , h2 [ id "dirtiest_team" ] [ text "Dirtiest Team" ]
+        , viewDirtiestTeam model.matchList model.showAll
+        , h2 [ id "goals_per_capita" ] [ text "Goals per Capita (Millions)" ]
         , p []
             [ text "Sources: "
             , a [ href "https://en.wikipedia.org/wiki/List_of_countries_by_population_(United_Nations)" ]
@@ -231,14 +244,14 @@ view model =
             , a [ href "https://en.wikipedia.org/wiki/Demography_of_the_United_Kingdom#Population" ]
                 [ text "Wikipedia UK/England data" ]
             ]
-        , viewGoalsPerCapita model.mergedPopulationAndStats
-        , h2 [] [ text "Match List" ]
-        , viewMatchList model.matchList
+        , viewGoalsPerCapita model.mergedPopulationAndStats model.showAll
+        , h2 [ id "match_list" ] [ text "Match List" ]
+        , viewMatchList model.matchList model.showGroupMatches
         ]
 
 
-viewMatchList : WebData (List Match) -> Html Msg
-viewMatchList matchList =
+viewMatchList : WebData (List Match) -> Bool -> Html Msg
+viewMatchList matchList showGroupMatches =
     case matchList of
         NotAsked ->
             displayNotAsked
@@ -252,16 +265,76 @@ viewMatchList matchList =
         Success matches ->
             let
                 sorted_matches =
-                    List.sortBy dateInSeconds matches
+                    case showGroupMatches of
+                        True ->
+                            List.sortBy dateInSeconds matches
+
+                        False ->
+                            List.sortBy dateInSeconds matches
+                                |> List.filter (\match -> match.stage_name /= "First stage")
+
+                grouped_matches =
+                    List.Extra.groupWhile sameDateDays sorted_matches
+
+                show_hide_label =
+                    case showGroupMatches of
+                        True ->
+                            "[–] Hide Group Matches"
+
+                        False ->
+                            "[+] Show Group Matches"
             in
                 div []
-                    [ Html.Keyed.ul [] <|
-                        List.map keyedDisplayMatch sorted_matches
+                    [ p []
+                        [ a [ onClickPreventDefault ToggleShowGroupMatches, href "#" ] [ text show_hide_label ]
+                        ]
+                    , Html.div
+                        []
+                      <|
+                        (grouped_matches
+                            |> List.map
+                                (\days_matches ->
+                                    let
+                                        first_match =
+                                            List.head days_matches
+
+                                        first_match_date =
+                                            case first_match of
+                                                Nothing ->
+                                                    "Nothing"
+
+                                                Just m ->
+                                                    dateFormatter m.datetime
+                                    in
+                                        div []
+                                            [ p [] [ text first_match_date ]
+                                            , Html.Keyed.ul [] <|
+                                                List.map keyedDisplayMatch days_matches
+                                            ]
+                                )
+                        )
                     ]
 
 
-viewFastestGoal : WebData (List Match) -> Html Msg
-viewFastestGoal matchList =
+
+{-
+   Html.Keyed.ul [] <|
+       List.map keyedDisplayMatch days_matches
+-}
+
+
+takeTenIfLimited : Bool -> List a -> List a
+takeTenIfLimited showAll list =
+    case showAll of
+        True ->
+            list
+
+        False ->
+            list |> List.take 10
+
+
+viewFastestGoal : WebData (List Match) -> Bool -> Html Msg
+viewFastestGoal matchList showAll =
     case matchList of
         NotAsked ->
             displayNotAsked
@@ -278,16 +351,20 @@ viewFastestGoal matchList =
                     matches
                         |> List.filterMap firstGoal
                         |> List.sortBy time
-                        |> List.take 10
+                        |> takeTenIfLimited showAll
+
+                show_hide_link =
+                    showHideLink showAll "#fastest_goal"
             in
                 div []
                     [ Html.Keyed.ul [] <|
                         List.map keyedDisplayMatchEvent matches_with_goals
+                    , p [] [ show_hide_link ]
                     ]
 
 
-viewBiggestLoss : WebData (List Match) -> Html Msg
-viewBiggestLoss matchList =
+viewBiggestLoss : WebData (List Match) -> Bool -> Html Msg
+viewBiggestLoss matchList showAll =
     case matchList of
         NotAsked ->
             displayNotAsked
@@ -305,16 +382,20 @@ viewBiggestLoss matchList =
                         |> List.filterMap lossMargin
                         |> List.sortBy Tuple.first
                         |> List.reverse
-                        |> List.take 10
+                        |> takeTenIfLimited showAll
+
+                show_hide_link =
+                    showHideLink showAll "#biggest_loss"
             in
                 div []
                     [ Html.Keyed.ul [] <|
                         List.map keyedDisplayLossMargin loss_margins
+                    , p [] [ show_hide_link ]
                     ]
 
 
-viewDirtiestTeam : WebData (List Match) -> Html Msg
-viewDirtiestTeam matchList =
+viewDirtiestTeam : WebData (List Match) -> Bool -> Html Msg
+viewDirtiestTeam matchList showAll =
     case matchList of
         NotAsked ->
             displayNotAsked
@@ -333,16 +414,20 @@ viewDirtiestTeam matchList =
                         |> Dict.toList
                         |> List.sortBy teamPoints
                         |> List.reverse
-                        |> List.take 10
+                        |> takeTenIfLimited showAll
+
+                show_hide_link =
+                    showHideLink showAll "#dirtiest_team"
             in
                 div []
                     [ Html.Keyed.ul [] <|
                         List.map keyedDisplayDirtyTeam card_count
+                    , p [] [ show_hide_link ]
                     ]
 
 
-viewGoalsPerCapita : WebData (List TeamSummaryStatsWithPopulation) -> Html Msg
-viewGoalsPerCapita summary =
+viewGoalsPerCapita : WebData (List TeamSummaryStatsWithPopulation) -> Bool -> Html Msg
+viewGoalsPerCapita summary showAll =
     case summary of
         NotAsked ->
             displayNotAsked
@@ -360,12 +445,26 @@ viewGoalsPerCapita summary =
                         |> List.map (\team -> calulateGoalsPerCapita team)
                         |> List.sortBy Tuple.first
                         |> List.reverse
-                        |> List.take 10
+                        |> takeTenIfLimited showAll
+
+                show_hide_link =
+                    showHideLink showAll "#goals_per_capita"
             in
                 div []
                     [ Html.Keyed.ul [] <|
                         List.map keyedDisplayPerCapita summaries_with_population
+                    , p [] [ show_hide_link ]
                     ]
+
+
+showHideLink : Bool -> String -> Html Msg
+showHideLink showAll id =
+    case showAll of
+        True ->
+            a [ onClick ToggleShowAll, href id ] [ text "[–] Show top 10" ]
+
+        False ->
+            a [ onClickPreventDefault ToggleShowAll, href "#" ] [ text "[+] Show full list" ]
 
 
 calulateGoalsPerCapita : TeamSummaryStatsWithPopulation -> ( Float, TeamSummaryStatsWithPopulation )
@@ -383,6 +482,28 @@ dateInSeconds match =
     match.datetime
         |> Date.toTime
         |> Time.inSeconds
+
+
+dateDay : Match -> Int
+dateDay match =
+    match.datetime
+        |> Date.day
+
+
+sameDateDays : Match -> Match -> Bool
+sameDateDays a b =
+    (dateDay a) == (dateDay b)
+
+
+dateFormatter : Date -> String
+dateFormatter =
+    DateFormat.format
+        [ DateFormat.dayOfWeekNameFull
+        , DateFormat.text " "
+        , DateFormat.dayOfMonthSuffix
+        , DateFormat.text " "
+        , DateFormat.monthNameFull
+        ]
 
 
 teamPoints : ( String, TeamMatchStats ) -> Int
@@ -542,7 +663,7 @@ displayGoals goals =
             text ""
 
 
-displayTeamName : Result -> Team -> Html Msg
+displayTeamName : MatchResult -> Team -> Html Msg
 displayTeamName result team =
     case result of
         NoResult ->
@@ -781,21 +902,20 @@ pointsFromCards yellows reds =
 
 teamDecode : Maybe (List MatchEvent) -> Maybe TeamMatchStats -> Decode.Decoder Team
 teamDecode events stats =
-    Decode.map5 Team
+    Decode.map4 Team
         (Decode.field "country" Decode.string)
         (Decode.field "code" Decode.string)
         (Decode.succeed events)
         (Decode.succeed stats)
-        (Decode.succeed Nothing)
 
 
-resultDecode : Decode.Decoder Result
+resultDecode : Decode.Decoder MatchResult
 resultDecode =
     Decode.string
         |> Decode.andThen resultStringToResultDecode
 
 
-resultStringToResultDecode : String -> Decode.Decoder Result
+resultStringToResultDecode : String -> Decode.Decoder MatchResult
 resultStringToResultDecode str =
     case str of
         "Draw" ->
