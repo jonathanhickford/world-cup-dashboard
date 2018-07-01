@@ -103,6 +103,7 @@ type alias Team =
 
 type alias TeamMatchStats =
     { goals : Int
+    , penalties : Int
     , yellow_cards : Int
     , red_cards : Int
     , points : Int
@@ -557,6 +558,7 @@ cardCount match store =
                                         , Just
                                             (TeamMatchStats
                                                 match_stats.goals
+                                                match_stats.penalties
                                                 match_stats.yellow_cards
                                                 match_stats.red_cards
                                                 match_stats.points
@@ -568,6 +570,7 @@ cardCount match store =
                                         , Just
                                             (TeamMatchStats
                                                 (stored_stats.goals + match_stats.goals)
+                                                (stored_stats.penalties + match_stats.penalties)
                                                 (stored_stats.yellow_cards + match_stats.yellow_cards)
                                                 (stored_stats.red_cards + match_stats.red_cards)
                                                 (stored_stats.points + match_stats.points)
@@ -637,8 +640,27 @@ displayCompleteMatch match =
         goal_text =
             case ( match.home_team.stats, match.away_team.stats ) of
                 ( Just home_stats, Just away_stats ) ->
-                    text
-                        (toString home_stats.goals ++ " - " ++ toString away_stats.goals)
+                    let
+                        draw =
+                            home_stats.goals == away_stats.goals
+
+                        some_penalties =
+                            (home_stats.penalties > 0) || (away_stats.penalties > 0)
+                    in
+                        case ( draw, some_penalties ) of
+                            ( True, True ) ->
+                                text
+                                    (toString home_stats.goals
+                                        ++ " ("
+                                        ++ toString home_stats.penalties
+                                        ++ ") - ("
+                                        ++ toString away_stats.penalties
+                                        ++ ") "
+                                        ++ toString away_stats.goals
+                                    )
+
+                            ( _, _ ) ->
+                                text (toString home_stats.goals ++ " - " ++ toString away_stats.goals)
 
                 ( _, _ ) ->
                     text ""
@@ -815,13 +837,17 @@ teamMonster { team_field, events_field, stats_field } =
     Decode.maybe (Decode.at [ team_field, "goals" ] Decode.int)
         |> Decode.andThen
             (\goals ->
-                Decode.maybe (Decode.field events_field (Decode.list matchEventDecode))
+                Decode.maybe (Decode.at [ team_field, "penalties" ] Decode.int)
                     |> Decode.andThen
-                        (\events ->
-                            Decode.maybe (Decode.field stats_field (statsDecode goals))
+                        (\penalties ->
+                            Decode.maybe (Decode.field events_field (Decode.list matchEventDecode))
                                 |> Decode.andThen
-                                    (\stats ->
-                                        Decode.field team_field (teamDecode events stats)
+                                    (\events ->
+                                        Decode.maybe (Decode.field stats_field (statsDecode goals penalties))
+                                            |> Decode.andThen
+                                                (\stats ->
+                                                    Decode.field team_field (teamDecode events stats)
+                                                )
                                     )
                         )
             )
@@ -877,11 +903,14 @@ groupStringtoGroup str =
             Decode.fail <| "Unknown group: " ++ somethingElse
 
 
-statsDecode : Maybe Int -> Decode.Decoder TeamMatchStats
-statsDecode goals =
+statsDecode : Maybe Int -> Maybe Int -> Decode.Decoder TeamMatchStats
+statsDecode goals penalties =
     let
         g =
             Maybe.withDefault 0 goals
+
+        p =
+            Maybe.withDefault 0 penalties
 
         reds =
             Decode.field "red_cards" Decode.int
@@ -889,8 +918,9 @@ statsDecode goals =
         yellows =
             Decode.field "yellow_cards" Decode.int
     in
-        Decode.map4 TeamMatchStats
+        Decode.map5 TeamMatchStats
             (Decode.succeed g)
+            (Decode.succeed p)
             yellows
             reds
             (Decode.map2 pointsFromCards yellows reds)
