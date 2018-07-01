@@ -17,6 +17,7 @@ import Dict exposing (Dict)
 import Round
 import List.Extra
 import DateFormat
+import Char
 
 
 ---- MODEL ----
@@ -71,7 +72,7 @@ type alias MatchEvent =
     { match_event_id : Int
     , type_of_event : String
     , player : String
-    , time : String
+    , time : Int
     }
 
 
@@ -533,7 +534,7 @@ firstGoal match =
             |> List.head
 
 
-time : ( String, MatchEvent ) -> String
+time : ( a, MatchEvent ) -> Int
 time ( _, event ) =
     event.time
 
@@ -586,7 +587,7 @@ cardCount match store =
             |> List.foldl update_action store
 
 
-isGoalEvent : ( String, MatchEvent ) -> Bool
+isGoalEvent : ( a, MatchEvent ) -> Bool
 isGoalEvent ( _, event ) =
     event.type_of_event == "goal"
 
@@ -758,8 +759,8 @@ displayDirtyTeam ( country, stats ) =
 displayMatchEvent : String -> MatchEvent -> Html Msg
 displayMatchEvent country matchEvent =
     li []
-        [ span [] [ text matchEvent.time ]
-        , text " "
+        [ span [] [ text (toString matchEvent.time) ]
+        , text "' "
         , span [] [ text matchEvent.player ]
         , span [] [ text (" (" ++ country ++ ")") ]
         ]
@@ -931,7 +932,20 @@ matchEventDecode =
         (Decode.field "id" Decode.int)
         (Decode.field "type_of_event" Decode.string)
         (Decode.field "player" Decode.string)
-        (Decode.field "time" Decode.string)
+        (Decode.field "time" Decode.string |> Decode.andThen timeStringToInt)
+
+
+timeStringToInt : String -> Decode.Decoder Int
+timeStringToInt str =
+    let
+        time =
+            String.split "+" str
+                |> List.map (String.filter Char.isDigit)
+                |> List.map String.toInt
+                |> List.map (Result.withDefault 0)
+                |> List.sum
+    in
+        Decode.succeed time
 
 
 populationsDecode : Decode.Decoder (List Population)
