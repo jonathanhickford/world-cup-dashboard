@@ -18,6 +18,7 @@ import Round
 import List.Extra
 import DateFormat
 import Char
+import Ports
 
 
 ---- MODEL ----
@@ -117,12 +118,13 @@ type alias Model =
     , mergedPopulationAndStats : WebData (List TeamSummaryStatsWithPopulation)
     , showGroupMatches : Bool
     , showAll : Bool
+    , newServiceWorkerAvailable : Bool
     }
 
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model Loading Loading Loading Loading False False, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
+    ( Model Loading Loading Loading Loading False False False, Cmd.batch [ fetchMatches, fetchPopulation, fetchSummary ] )
 
 
 
@@ -135,6 +137,8 @@ type Msg
     | HandleSummaryResponse (WebData (List TeamSummaryStats))
     | ToggleShowGroupMatches
     | ToggleShowAll
+    | NewServiceWorkerAvailable Bool
+    | RefreshPage
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -168,6 +172,12 @@ update msg model =
 
         ToggleShowAll ->
             ( { model | showAll = not model.showAll }, Cmd.none )
+
+        NewServiceWorkerAvailable boolean_value ->
+            ( { model | newServiceWorkerAvailable = boolean_value }, Cmd.none )
+
+        RefreshPage ->
+            ( model, Ports.refreshPage () )
 
 
 fetchMatches : Cmd Msg
@@ -226,10 +236,21 @@ mergePopulationandStats population stats =
 ---- VIEW ----
 
 
+displayNewServiceWorkerAvailable : Bool -> Html Msg
+displayNewServiceWorkerAvailable userShouldReload =
+    case userShouldReload of
+        True ->
+            Html.button [ onClick RefreshPage ] [ text "A new version is avaliable, please refresh this page" ]
+
+        False ->
+            text ""
+
+
 view : Model -> Html Msg
 view model =
     div []
-        [ h1 [] [ text "World Cup Sweepstake" ]
+        [ displayNewServiceWorkerAvailable model.newServiceWorkerAvailable
+        , h1 [] [ text "World Cup Sweepstake" ]
         , h2 [ id "fastest_goal" ] [ text "Fastest Goal" ]
         , viewFastestGoal model.matchList model.showAll
         , h2 [ id "biggest_loss" ] [ text "Biggest Loss" ]
@@ -1032,6 +1053,15 @@ groupbyCountry country list =
 
 
 
+---- SUBSCRIPTIONS ----
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Ports.newServiceWorkerAvailable NewServiceWorkerAvailable
+
+
+
 ---- PROGRAM ----
 
 
@@ -1041,5 +1071,5 @@ main =
         { view = view
         , init = init
         , update = update
-        , subscriptions = always Sub.none
+        , subscriptions = subscriptions
         }
