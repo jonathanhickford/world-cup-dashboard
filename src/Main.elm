@@ -136,7 +136,7 @@ type Msg
     | HandlePopulationResponse (WebData (List Population))
     | HandleSummaryResponse (WebData (List TeamSummaryStats))
     | ToggleShowGroupMatches
-    | ToggleShowAll
+    | ToggleShowAll String
     | NewServiceWorkerAvailable Bool
     | RefreshPage
 
@@ -170,8 +170,8 @@ update msg model =
         ToggleShowGroupMatches ->
             ( { model | showGroupMatches = not model.showGroupMatches }, Cmd.none )
 
-        ToggleShowAll ->
-            ( { model | showAll = not model.showAll }, Cmd.none )
+        ToggleShowAll id ->
+            ( { model | showAll = not model.showAll }, Ports.scrollIntoView id )
 
         NewServiceWorkerAvailable boolean_value ->
             ( { model | newServiceWorkerAvailable = boolean_value }, Cmd.none )
@@ -377,7 +377,7 @@ viewFastestGoal matchList showAll =
                         |> takeTenIfLimited showAll
 
                 show_hide_link =
-                    showHideLink showAll "#fastest_goal"
+                    showHideLink showAll "fastest_goal"
             in
                 div []
                     [ Html.Keyed.ul [] <|
@@ -408,7 +408,7 @@ viewBiggestLoss matchList showAll =
                         |> takeTenIfLimited showAll
 
                 show_hide_link =
-                    showHideLink showAll "#biggest_loss"
+                    showHideLink showAll "biggest_loss"
             in
                 div []
                     [ Html.Keyed.ul [] <|
@@ -440,7 +440,7 @@ viewDirtiestTeam matchList showAll =
                         |> takeTenIfLimited showAll
 
                 show_hide_link =
-                    showHideLink showAll "#dirtiest_team"
+                    showHideLink showAll "dirtiest_team"
             in
                 div []
                     [ Html.Keyed.ul [] <|
@@ -471,7 +471,7 @@ viewGoalsPerCapita summary showAll =
                         |> takeTenIfLimited showAll
 
                 show_hide_link =
-                    showHideLink showAll "#goals_per_capita"
+                    showHideLink showAll "goals_per_capita"
             in
                 div []
                     [ Html.Keyed.ul [] <|
@@ -484,10 +484,10 @@ showHideLink : Bool -> String -> Html Msg
 showHideLink showAll id =
     case showAll of
         True ->
-            a [ onClick ToggleShowAll, href id ] [ text "[–] Show top 10" ]
+            a [ onClick (ToggleShowAll id), href ("#" ++ id) ] [ text "[–] Show top 10" ]
 
         False ->
-            a [ onClickPreventDefault ToggleShowAll, href "#" ] [ text "[+] Show full list" ]
+            a [ onClickPreventDefault (ToggleShowAll id), href "#" ] [ text "[+] Show full list" ]
 
 
 calulateGoalsPerCapita : TeamSummaryStatsWithPopulation -> ( Float, TeamSummaryStatsWithPopulation )

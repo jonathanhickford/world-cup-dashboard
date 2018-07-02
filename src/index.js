@@ -10,3 +10,18 @@ app.ports.refreshPage.subscribe(function() {
     window.location.reload();
     //app.ports.newServiceWorkerAvailable.send(false);
 });
+
+app.ports.scrollIntoView.subscribe( (elem) => {
+     requestAnimationFrame( () => {
+        const element = document.getElementById(elem);
+        if (element == null) {
+           throw new Error("Element not found: " + elem);
+        } else {
+            if (element.scrollIntoViewIfNeeded != null) {
+              element.scrollIntoViewIfNeeded(false);
+            } else {
+           element.scrollIntoView();
+            }
+       }
+    })
+});
