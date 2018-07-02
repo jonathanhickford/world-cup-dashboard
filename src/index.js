@@ -3,6 +3,10 @@ import registerServiceWorker from './registerServiceWorker';
 
 var app = Main.embed(document.getElementById('root'));
 
+window.newServiceWorkerAvailable = function() {
+    app.ports.newServiceWorkerAvailable.send(true);
+}
+
 registerServiceWorker();
 //app.ports.newServiceWorkerAvailable.send(true);
 
