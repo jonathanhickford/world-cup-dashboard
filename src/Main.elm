@@ -184,8 +184,9 @@ fetchMatches : Cmd Msg
 fetchMatches =
     let
         url =
-            --"%PUBLIC_URL%/matches.json"
-            "https://worldcup.sfg.io/matches"
+            "%PUBLIC_URL%/matches.json"
+
+        --"https://worldcup.sfg.io/matches"
     in
         RemoteData.Http.get url HandleMatchesResponse matchesDecoder
 
@@ -194,8 +195,9 @@ fetchSummary : Cmd Msg
 fetchSummary =
     let
         url =
-            --"/matches.json"
-            "https://worldcup.sfg.io/teams/results"
+            "%PUBLIC_URL%/results.json"
+
+        --"https://worldcup.sfg.io/teams/results"
     in
         RemoteData.Http.get url HandleSummaryResponse summariesDecode
 
